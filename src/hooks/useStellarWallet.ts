@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Keypair } from '@stellar/stellar-sdk';
+import { Keypair } from '@stellar/stellar-base';
 
 export type WalletState =
   | { status: 'disconnected' }
@@ -13,6 +13,7 @@ export interface UseStellarWallet {
   wallet:        WalletState;
   connect:       () => Promise<void>;
   disconnect:    () => void;
+  /** ⚠️ Demo stub — does not submit to the network. Replace with Freighter/passkey-kit. */
   signAndSubmit: (xdr: string) => Promise<string>;
 }
 
@@ -42,11 +43,8 @@ export function useStellarWallet(): UseStellarWallet {
     setWallet({ status: 'disconnected' });
   }, []);
 
-  // Depend only on `keypair` — avoids recreating the callback on every wallet state change
   const signAndSubmit = useCallback(async (xdr: string): Promise<string> => {
-    if (!keypair) {
-      throw new Error('Wallet not connected');
-    }
+    if (!keypair) throw new Error('Wallet not connected');
     // Stub: in production load account, build tx, sign, submit via Horizon
     void xdr;
     return 'TX_HASH_PLACEHOLDER';

@@ -2,34 +2,36 @@
 
 import { useState } from 'react';
 import { useStellarWallet } from '@/hooks/useStellarWallet';
+import { requestProof } from '@/lib/requestProof';
 import type { InvoiceFormData, ProveResult } from '@/types/invoice';
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:3001';
-
-async function requestProof(form: InvoiceFormData): Promise<ProveResult> {
-  // Use crypto.getRandomValues for a cryptographically secure salt
-  const saltBytes = new Uint8Array(8);
-  crypto.getRandomValues(saltBytes);
-  const salt = saltBytes.reduce((acc, b) => acc * 256n + BigInt(b), 0n).toString();
-
-  const res = await fetch(`${BACKEND_URL}/api/prove-factoring`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      invoice_amount: form.invoiceAmount,
-      supplier_id:    form.supplierId,
-      buyer_id:       form.buyerId,
-      invoice_salt:   salt,
-    }),
-  });
-
-  // Surface non-2xx responses as structured errors instead of trying to parse them
-  if (!res.ok) {
-    const text = await res.text();
-    return { ok: false, error: `Server error ${res.status}: ${text.slice(0, 200)}` };
+// Validate that a field value is a positive integer
+function validateFields(form: InvoiceFormData): string | null {
+  for (const [key, raw] of Object.entries(form)) {
+    const n = Number(raw);
+    if (!raw || !Number.isInteger(n) || n <= 0) {
+      return `${key} must be a positive integer.`;
+    }
   }
+  return null;
+}
 
-  return res.json() as Promise<ProveResult>;
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+  return (
+    <button
+      onClick={copy}
+      className="ml-2 text-xs text-indigo-400 hover:text-indigo-300 underline"
+      aria-label="Copy to clipboard"
+    >
+      {copied ? 'copied!' : 'copy'}
+    </button>
+  );
 }
 
 export default function DashboardPage() {
@@ -39,22 +41,23 @@ export default function DashboardPage() {
     supplierId:    '',
     buyerId:       '',
   });
+  const [fieldError, setFieldError] = useState<string | null>(null);
   const [status, setStatus] = useState<'idle' | 'proving' | 'done' | 'error'>('idle');
   const [result, setResult] = useState<ProveResult | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const validationError = validateFields(form);
+    if (validationError) {
+      setFieldError(validationError);
+      return;
+    }
+    setFieldError(null);
     setStatus('proving');
     setResult(null);
-    try {
-      const res = await requestProof(form);
-      setResult(res);
-      setStatus(res.ok ? 'done' : 'error');
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      setResult({ ok: false, error: message });
-      setStatus('error');
-    }
+    const res = await requestProof(form);
+    setResult(res);
+    setStatus(res.ok ? 'done' : 'error');
   }
 
   const walletNotConnected = wallet.status !== 'connected';
@@ -87,8 +90,13 @@ export default function DashboardPage() {
         )}
       </div>
 
+      {/* Stub warning */}
+      <p role="note" className="text-xs text-yellow-500 bg-yellow-950 border border-yellow-700 rounded-lg px-3 py-2">
+        ⚠️ <strong>Demo mode:</strong> <code>signAndSubmit</code> is a stub and does not broadcast transactions to the Stellar network.
+      </p>
+
       {/* Invoice Form */}
-      <form onSubmit={handleSubmit} className="bg-gray-900 rounded-xl p-6 space-y-4">
+      <form onSubmit={handleSubmit} className="bg-gray-900 rounded-xl p-6 space-y-4" noValidate>
         <h2 className="text-lg font-semibold">Submit Invoice for Factoring</h2>
 
         {(
@@ -104,15 +112,20 @@ export default function DashboardPage() {
               id={id}
               type="text"
               inputMode="numeric"
-              pattern="[0-9]*"
+              pattern="[1-9][0-9]*"
               placeholder={placeholder}
               value={form[id]}
               onChange={e => setForm(prev => ({ ...prev, [id]: e.target.value }))}
+              aria-describedby={fieldError ? 'field-error' : undefined}
               required
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
         ))}
+
+        {fieldError && (
+          <p id="field-error" role="alert" className="text-xs text-red-400">{fieldError}</p>
+        )}
 
         {walletNotConnected && (
           <p className="text-xs text-yellow-400">Connect your wallet to submit a proof.</p>
@@ -127,26 +140,36 @@ export default function DashboardPage() {
         </button>
       </form>
 
-      {/* Result */}
-      {result && (
-        <div className={`rounded-xl p-4 text-sm font-mono break-all ${result.ok ? 'bg-green-950 border border-green-700' : 'bg-red-950 border border-red-700'}`}>
-          {result.ok ? (
-            <div className="space-y-1">
-              <p className="text-green-400 font-semibold">✓ Proof generated</p>
-              <p><span className="text-gray-400">commitment: </span>{result.proof.commitment}</p>
-              <p><span className="text-gray-400">nullifier:  </span>{result.proof.nullifier}</p>
-              <p>
-                <span className="text-gray-400">proof:      </span>
-                {result.proof.proof_bytes
-                  ? `${result.proof.proof_bytes.slice(0, 40)}…`
-                  : <span className="text-gray-500">(empty)</span>}
-              </p>
-            </div>
-          ) : (
-            <p className="text-red-400">✗ {result.error}</p>
-          )}
-        </div>
-      )}
+      {/* Result — aria-live so screen readers announce updates */}
+      <div aria-live="polite" aria-atomic="true">
+        {result && (
+          <div className={`rounded-xl p-4 text-sm font-mono break-all ${result.ok ? 'bg-green-950 border border-green-700' : 'bg-red-950 border border-red-700'}`}>
+            {result.ok ? (
+              <div className="space-y-2">
+                <p className="text-green-400 font-semibold">✓ Proof generated</p>
+                <p>
+                  <span className="text-gray-400">commitment: </span>
+                  {result.proof.commitment}
+                  <CopyButton value={result.proof.commitment} />
+                </p>
+                <p>
+                  <span className="text-gray-400">nullifier:  </span>
+                  {result.proof.nullifier}
+                  <CopyButton value={result.proof.nullifier} />
+                </p>
+                <p>
+                  <span className="text-gray-400">proof:      </span>
+                  {result.proof.proof_bytes
+                    ? `${result.proof.proof_bytes.slice(0, 40)}…`
+                    : <span className="text-gray-500">(empty)</span>}
+                </p>
+              </div>
+            ) : (
+              <p role="alert" className="text-red-400">✗ {result.error}</p>
+            )}
+          </div>
+        )}
+      </div>
     </main>
   );
 }
