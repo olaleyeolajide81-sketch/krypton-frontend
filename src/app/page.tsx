@@ -7,7 +7,11 @@ import type { InvoiceFormData, ProveResult } from '@/types/invoice';
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:3001';
 
 async function requestProof(form: InvoiceFormData): Promise<ProveResult> {
-  const salt = BigInt(Math.floor(Math.random() * 1e15)).toString();
+  // Use crypto.getRandomValues for a cryptographically secure salt
+  const saltBytes = new Uint8Array(8);
+  crypto.getRandomValues(saltBytes);
+  const salt = saltBytes.reduce((acc, b) => acc * 256n + BigInt(b), 0n).toString();
+
   const res = await fetch(`${BACKEND_URL}/api/prove-factoring`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -18,6 +22,13 @@ async function requestProof(form: InvoiceFormData): Promise<ProveResult> {
       invoice_salt:   salt,
     }),
   });
+
+  // Surface non-2xx responses as structured errors instead of trying to parse them
+  if (!res.ok) {
+    const text = await res.text();
+    return { ok: false, error: `Server error ${res.status}: ${text.slice(0, 200)}` };
+  }
+
   return res.json() as Promise<ProveResult>;
 }
 
@@ -35,10 +46,18 @@ export default function DashboardPage() {
     e.preventDefault();
     setStatus('proving');
     setResult(null);
-    const res = await requestProof(form);
-    setResult(res);
-    setStatus(res.ok ? 'done' : 'error');
+    try {
+      const res = await requestProof(form);
+      setResult(res);
+      setStatus(res.ok ? 'done' : 'error');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setResult({ ok: false, error: message });
+      setStatus('error');
+    }
   }
+
+  const walletNotConnected = wallet.status !== 'connected';
 
   return (
     <main className="max-w-2xl mx-auto py-16 px-4 space-y-8">
@@ -95,9 +114,13 @@ export default function DashboardPage() {
           </div>
         ))}
 
+        {walletNotConnected && (
+          <p className="text-xs text-yellow-400">Connect your wallet to submit a proof.</p>
+        )}
+
         <button
           type="submit"
-          disabled={status === 'proving' || wallet.status !== 'connected'}
+          disabled={status === 'proving' || walletNotConnected}
           className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg font-medium disabled:opacity-50"
         >
           {status === 'proving' ? 'Generating ZK Proof…' : 'Generate & Submit Proof'}
@@ -112,7 +135,12 @@ export default function DashboardPage() {
               <p className="text-green-400 font-semibold">✓ Proof generated</p>
               <p><span className="text-gray-400">commitment: </span>{result.proof.commitment}</p>
               <p><span className="text-gray-400">nullifier:  </span>{result.proof.nullifier}</p>
-              <p><span className="text-gray-400">proof:      </span>{result.proof.proof_bytes.slice(0, 40)}…</p>
+              <p>
+                <span className="text-gray-400">proof:      </span>
+                {result.proof.proof_bytes
+                  ? `${result.proof.proof_bytes.slice(0, 40)}…`
+                  : <span className="text-gray-500">(empty)</span>}
+              </p>
             </div>
           ) : (
             <p className="text-red-400">✗ {result.error}</p>
