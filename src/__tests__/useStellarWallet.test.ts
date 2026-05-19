@@ -1,6 +1,14 @@
 import { renderHook, act } from '@testing-library/react';
 import { useStellarWallet } from '../hooks/useStellarWallet';
 
+// Freighter is not available in jsdom
+jest.mock('@stellar/freighter-api', () => ({
+  isConnected:     jest.fn().mockResolvedValue({ isConnected: false }),
+  requestAccess:   jest.fn(),
+  getPublicKey:    jest.fn(),
+  signTransaction: jest.fn(),
+}));
+
 describe('useStellarWallet', () => {
   it('starts disconnected', () => {
     const { result } = renderHook(() => useStellarWallet());

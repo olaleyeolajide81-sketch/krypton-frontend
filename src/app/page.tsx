@@ -72,6 +72,9 @@ export default function DashboardPage() {
         </h1>
         {wallet.status === 'connected' ? (
           <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 uppercase tracking-wide">
+              {wallet.via === 'freighter' ? '🔑 Freighter' : '⚗️ Ephemeral'}
+            </span>
             <span className="text-xs text-green-400 font-mono truncate max-w-[140px]">
               {wallet.publicKey}
             </span>
@@ -90,10 +93,12 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Stub warning */}
-      <p role="note" className="text-xs text-yellow-500 bg-yellow-950 border border-yellow-700 rounded-lg px-3 py-2">
-        ⚠️ <strong>Demo mode:</strong> <code>signAndSubmit</code> is a stub and does not broadcast transactions to the Stellar network.
-      </p>
+      {/* Warn only when using the ephemeral fallback */}
+      {wallet.status === 'connected' && wallet.via === 'ephemeral' && (
+        <p role="note" className="text-xs text-yellow-500 bg-yellow-950 border border-yellow-700 rounded-lg px-3 py-2">
+          ⚠️ <strong>Demo mode:</strong> Freighter not detected — using an ephemeral keypair. Transactions are not broadcast to the network.
+        </p>
+      )}
 
       {/* Invoice Form */}
       <form onSubmit={handleSubmit} className="bg-gray-900 rounded-xl p-6 space-y-4" noValidate>
